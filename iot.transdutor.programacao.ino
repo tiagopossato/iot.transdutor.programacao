@@ -32,8 +32,8 @@ struct {
 
 //estrutura com os dados a serem enviados
 struct {
-  uint16_t temperaturaAr;
-  uint16_t umidadeAr;
+  float temperaturaAr;
+  float umidadeAr;
 } dados;
 
 // Contadores
@@ -63,18 +63,18 @@ void setup()
   Serial.println(F(""));
   Serial.println(F("----------------------------------------"));
 #endif
-
   leSensorConfig();
+
   if (sensorConfig.intervaloLeitura < 2 || sensorConfig.intervaloLeitura > 3600 ) {
     sensorConfig.intervaloLeitura = 2;
     salvarSensorConfig();
   }
-  if (sensorConfig.intervaloEnvio < 0 || sensorConfig.intervaloEnvio > 3600 ) {
+  if (sensorConfig.intervaloEnvio <= 0 || sensorConfig.intervaloEnvio > 3600 ) {
     sensorConfig.intervaloEnvio = 1;
     salvarSensorConfig();
   }
   if (sensorConfig.endereco == 0) {
-    sensorConfig.endereco = 255;
+    sensorConfig.endereco = 1;
     salvarSensorConfig();
   }
 
@@ -123,21 +123,21 @@ void loop() {
 */
 void lerDados() {
   boolean flagEnviar = false;
-  uint16_t tmp = 0;
+  float tmp = 0;
 
-  tmp = hdc1080.readTemperature() * 100;
+  tmp = hdc1080.readTemperature();
   if (abs(tmp - dados.temperaturaAr) > 0.5) flagEnviar = true;
   dados.temperaturaAr = tmp;
 
-  tmp = hdc1080.readHumidity() * 100;
+  tmp = hdc1080.readHumidity();
   if (abs(tmp - dados.umidadeAr) > 0.5) flagEnviar = true;
   dados.umidadeAr = tmp;
 
 #if defined(DEBUG)
   Serial.print("T=");
-  Serial.print(dados.temperaturaAr / 100.0);
+  Serial.print(dados.temperaturaAr);
   Serial.print("C, RH=");
-  Serial.print(dados.umidadeAr / 100.0);
+  Serial.print(dados.umidadeAr);
   Serial.println("%");
 #endif
   if (flagEnviar) enviarDados();
@@ -194,25 +194,28 @@ void enviarDados() {
   enviarUmidadeAr();
   delay(10);
   enviarUmidadeSolo();
+  msUltimoEnvio = millis();
 }
 
 void enviarTemperatura() {
-  unsigned char msg[3] = {0};
+  unsigned char msg[4] = {0};
 
-  msg[0] = TEMPERATURA;
-  msg[1] = lowByte(dados.temperaturaAr);
-  msg[2] = highByte(dados.temperaturaAr);
+  msg[0] = ANALOG_VALUE;
+  msg[1] = TEMPERATURA;
+  msg[2] = (int)dados.temperaturaAr;
+  msg[3] = (int)((dados.temperaturaAr - (int)dados.temperaturaAr) * 100);
 
   CAN.sendMsgBuf(sensorConfig.endereco, 0, sizeof(msg), msg);
 
 }
 
 void enviarUmidadeAr() {
-  unsigned char msg[3] = {0};
+  unsigned char msg[4] = {0};
 
-  msg[0] = TEMPERATURA;
-  msg[1] = lowByte(dados.umidadeAr);
-  msg[2] = highByte(dados.umidadeAr);
+  msg[0] = ANALOG_VALUE;
+  msg[1] = UMIDADE_AR;
+  msg[2] = (int)dados.umidadeAr;
+  msg[3] = (int)((dados.umidadeAr - (int)dados.umidadeAr) * 100);
 
   CAN.sendMsgBuf(sensorConfig.endereco, 0, sizeof(msg), msg);
 }
@@ -252,13 +255,13 @@ bool pacoteRecebido() {
   canPkt.canId = buf[0];
   //confere se é para este dispositivo
   if (canPkt.canId != sensorConfig.endereco) {
-    leSensorConfig();
-#if defined(DEBUG)
-    Serial.print(F("Esta mensagem nao e para este dispositivo: "));
-    Serial.print(canPkt.canId);
-    Serial.print(F(" != "));
-    Serial.println(sensorConfig.endereco);
-#endif
+    //    leSensorConfig();
+    //#if defined(DEBUG)
+    //    Serial.print(F("Esta mensagem nao e para este dispositivo: "));
+    //    Serial.print(canPkt.canId);
+    //    Serial.print(F(" != "));
+    //    Serial.println(sensorConfig.endereco);
+    //#endif
     return false;
   }
 
