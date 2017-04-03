@@ -8,7 +8,7 @@
 #include <EEPROM.h>
 #include "SPI.h"
 #include "mcp_can.h"
-#include "overCAN.h"
+#include "ctmNectar.h"
 #include <Wire.h>
 #include "ClosedCube_HDC1080.h"
 
@@ -98,6 +98,8 @@ void setup()
   unsigned char msgCfg[1] = {ONLINE};
   CAN.sendMsgBuf(sensorConfig.endereco, 0, sizeof(msgCfg), msgCfg);
 
+  //Inicializa o Watchdog
+  wdt_enable(WDTO_250MS);
 }
 
 void loop() {
@@ -115,7 +117,11 @@ void loop() {
   if (millis() > msUltimaLeitura + (sensorConfig.intervaloLeitura * 1000)) {
     lerDados();
     msUltimaLeitura = millis();
+    if (CAN.checkError() != 0) {
+      reiniciar();
+    }
   }
+  wdt_reset();  //  reseta o watchdog
 }
 
 /**
