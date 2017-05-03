@@ -1,7 +1,7 @@
 /**
    Bibliotecas utilizadas
    https://github.com/Seeed-Studio/CAN_BUS_Shield
-   https://github.com/tiagopossato/overCAN
+   https://github.com/tiagopossato/ctmNectar
 */
 
 #include <avr/wdt.h>
@@ -11,6 +11,7 @@
 #include "ctmNectar.h"
 #include <Wire.h>
 #include "ClosedCube_HDC1080.h"
+#include "definicoes.h"
 
 #define DEBUG
 #define CENTRAL_ID 0x00
@@ -30,11 +31,14 @@ struct {
   uint16_t intervaloLeitura; //Intervalo entre as leituras, em segundos
 } sensorConfig;
 
-//estrutura com os dados a serem enviados
+//estrutura com os dados analogicos do sensor
 struct {
   float temperaturaAr;
   float umidadeAr;
+  float umidadeSolo;
 } dados;
+
+int8_t entradasDigitais[8];
 
 // Contadores
 uint32_t msUltimoEnvio = 0;
@@ -78,6 +82,10 @@ void setup()
     salvarSensorConfig();
   }
 
+  /*INTERVALO FIXO PARA FINS DE SIMULAÇÃO*/
+  sensorConfig.intervaloLeitura = 2;
+  sensorConfig.intervaloEnvio = 1000;
+
   if (CAN_OK != CAN.begin(CAN_100KBPS))              // init can bus : baudrate = 100k
   {
 #if defined(DEBUG)
@@ -90,16 +98,15 @@ void setup()
 
   hdc1080.begin(0x40);
 
-
 #if defined(DEBUG)
   Serial.println(F("Remota: CAN BUS init ok!"));
 #endif
 
-  unsigned char msgCfg[1] = {ONLINE};
+  unsigned char msgCfg[3] = {especial, 1, 1};
   CAN.sendMsgBuf(sensorConfig.endereco, 0, sizeof(msgCfg), msgCfg);
 
   //Inicializa o Watchdog
-  wdt_enable(WDTO_250MS);
+  //wdt_enable(WDTO_250MS);
 }
 
 void loop() {
@@ -108,8 +115,13 @@ void loop() {
   if (!pacoteRecebido()) {
     // Se não recebeu, verifica se está na hora de enviar os dados
     if (millis() > msUltimoEnvio + (sensorConfig.intervaloEnvio * 1000)) {
+      /*SIMULAÇÃO*/
+      randomSeed(analogRead(A3));
+      sensorConfig.endereco = (uint8_t) random(1, 6);
+       msUltimoEnvio = millis();
+      /*FIM DA SIMULAÇÃO*/
       lerDados();
-      enviarDados();
+      //enviarDados();
       //msUltimoEnvio atualizado na funcao enviarDados, para incluir nas contagens quando os dados são enviados por solicitação do mestre e não por tempo
     }
   }
@@ -121,7 +133,7 @@ void loop() {
       reiniciar();
     }
   }
-  wdt_reset();  //  reseta o watchdog
+  //wdt_reset();  //  reseta o watchdog
 }
 
 /**
@@ -131,22 +143,35 @@ void lerDados() {
   boolean flagEnviar = false;
   float tmp = 0;
 
+  /*LE TEMPERATURA */
   tmp = hdc1080.readTemperature();
   if (abs(tmp - dados.temperaturaAr) > 0.5) flagEnviar = true;
   dados.temperaturaAr = tmp;
 
+  /*LE UMIDADE DO AR*/
   tmp = hdc1080.readHumidity();
   if (abs(tmp - dados.umidadeAr) > 0.5) flagEnviar = true;
   dados.umidadeAr = tmp;
+
+  /*SIMULA UMIDADE DO SOLO*/
+  dados.umidadeSolo = (float) (random(-300, 900) / 10.0);
+
+  /*SIMULA ENTRADAS DIGITAIS*/
+  for (char i = 0; i < 8; i++) {
+    entradasDigitais[i] = (uint8_t)random(0, 2);
+  }
+  /*FIM DA SIMULAÇÃO*/
 
 #if defined(DEBUG)
   Serial.print("T=");
   Serial.print(dados.temperaturaAr);
   Serial.print("C, RH=");
   Serial.print(dados.umidadeAr);
+  Serial.print("%uR, Solo=");
+  Serial.print(dados.umidadeSolo);
   Serial.println("%");
 #endif
-  if (flagEnviar) enviarDados();
+  //if (flagEnviar) enviarDados();
 
 }
 
@@ -200,34 +225,74 @@ void enviarDados() {
   enviarUmidadeAr();
   delay(10);
   enviarUmidadeSolo();
+
+  //envia entradas digitais
+  for (char i = 0; i < 8; i++) {
+    delay(10);
+    lerEntradaDigital(i);
+  }
   msUltimoEnvio = millis();
 }
 
 void enviarTemperatura() {
+  int16_t tmp = 0;
   unsigned char msg[4] = {0};
 
-  msg[0] = ANALOG_VALUE;
-  msg[1] = TEMPERATURA;
-  msg[2] = (int)dados.temperaturaAr;
-  msg[3] = (int)((dados.temperaturaAr - (int)dados.temperaturaAr) * 100);
+  msg[0] = (uint8_t)entradaAnalogica;
+  msg[1] = (uint8_t)temperatura;
+  tmp = dados.temperaturaAr * 100.0;
+  msg[2] = highByte(tmp);
+  msg[3] = lowByte(tmp);
 
   CAN.sendMsgBuf(sensorConfig.endereco, 0, sizeof(msg), msg);
 
 }
 
 void enviarUmidadeAr() {
+  int16_t tmp = 0;
   unsigned char msg[4] = {0};
 
-  msg[0] = ANALOG_VALUE;
-  msg[1] = UMIDADE_AR;
-  msg[2] = (int)dados.umidadeAr;
-  msg[3] = (int)((dados.umidadeAr - (int)dados.umidadeAr) * 100);
+  msg[0] = (uint8_t)entradaAnalogica;
+  msg[1] = (uint8_t)umidadeAr;
+  tmp = dados.umidadeAr * 100.0;
+  msg[2] = highByte(tmp);
+  msg[3] = lowByte(tmp);
 
   CAN.sendMsgBuf(sensorConfig.endereco, 0, sizeof(msg), msg);
 }
 
 void enviarUmidadeSolo() {
-  return;
+  int16_t tmp = 0;
+  unsigned char msg[4] = {0};
+
+  msg[0] = (uint8_t)entradaAnalogica;
+  msg[1] = (uint8_t)umidadeSolo;
+  tmp = dados.umidadeSolo * 100.0;
+  msg[2] = highByte(tmp);
+  msg[3] = lowByte(tmp);
+
+  CAN.sendMsgBuf(sensorConfig.endereco, 0, sizeof(msg), msg);
+}
+
+
+void lerEntradaDigital(uint8_t entrada) {
+  if (entrada >= 0 && entrada < 8) {
+    unsigned char msg[4] = {0};
+
+    msg[0] = (uint8_t)entradaDigital;
+    msg[1] = (uint8_t)entrada;
+    /*SIMULAÇÃO*/
+    msg[2] = entradasDigitais[entrada];
+    CAN.sendMsgBuf(sensorConfig.endereco, 0, sizeof(msg), msg);
+  }
+}
+
+void escreveSaidaDigital(uint8_t saida, int16_t valor) {
+#if defined(DEBUG)
+  if (valor == 1)Serial.print(F("Ligando pino: "));
+  else Serial.print(F("Desligando pino: "));
+  Serial.println(saida);
+#endif
 }
 
 bool pacoteRecebido() {
@@ -241,15 +306,16 @@ bool pacoteRecebido() {
 
   //Estrutura que vai receber a mensagem
   struct {
-    unsigned int canId;
-    unsigned char comando;
-    unsigned char msg[6];
+    uint8_t idRede;
+    uint8_t tipoGrandeza;
+    uint8_t grandeza;
+    int16_t valor;
   } canPkt;
 
   //Le a mensagem da placa
   CAN.readMsgBuf(&len, buf);    // read data,  len: data length, buf: data buf
 
-  //Pega o ID do transmissor
+  //Verifica o ID do transmissor
   if (CAN.getCanId() != CENTRAL_ID) {
 #if defined(DEBUG)
     Serial.println(F("Mensagem nao enviada pela central"));
@@ -258,9 +324,17 @@ bool pacoteRecebido() {
   }
 
   //Pega o ID do destino
-  canPkt.canId = buf[0];
+  canPkt.idRede = buf[0];
+
+  /*SIMULAÇÃO*/
+  if (canPkt.idRede != 6) {
+    sensorConfig.endereco = canPkt.idRede;
+  }
+  /*FIM SIMULAÇÃO*/
+
+
   //confere se é para este dispositivo
-  if (canPkt.canId != sensorConfig.endereco) {
+  if (canPkt.idRede != sensorConfig.endereco) {
     //    leSensorConfig();
     //#if defined(DEBUG)
     //    Serial.print(F("Esta mensagem nao e para este dispositivo: "));
@@ -272,67 +346,66 @@ bool pacoteRecebido() {
   }
 
   //Pega o comando enviado
-  canPkt.comando = buf[1];
+  canPkt.tipoGrandeza = buf[1];
+  canPkt.grandeza = buf[2];
+  canPkt.valor = word(buf[3], buf[4]);
 
-  //verifica o comando
-  switch (canPkt.comando) {
-    case SEND_CONFIG: {
+  //verifica o tipo de grandeza
+  switch (canPkt.tipoGrandeza) {
+    /*--------entradas analogicas-----------*/
+    case entradaAnalogica: {
 #if defined(DEBUG)
-        Serial.println(F("SEND_CONFIG"));
+        Serial.println(F("entradaAnalogica"));
 #endif
-        enviarConfig();
+        switch (canPkt.grandeza) {
+          case temperatura:
+            {
+#if defined(DEBUG)
+              Serial.println(F("temperatura"));
+#endif
+              enviarTemperatura();
+              break;
+            };
+          case umidadeAr:
+            {
+#if defined(DEBUG)
+              Serial.println(F("umidadeAr"));
+#endif
+              enviarUmidadeAr();
+              break;
+            };
+          case umidadeSolo:
+            {
+#if defined(DEBUG)
+              Serial.println(F("umidadeSolo"));
+#endif
+              enviarUmidadeSolo();
+              break;
+            };
+        };
+        break;
       };
-      break;
+    /*--------fim das entradas analogicas-----------*/
 
-    case SEND_DATA: {
+    /*--------entradas digitais-----------*/
+    case entradaDigital: {
 #if defined(DEBUG)
-        Serial.println(F("SEND_DATA"));
+        Serial.println(F("entradaDigital"));
 #endif
-        enviarDados();
+        lerEntradaDigital(canPkt.grandeza);
+        break;
       };
-      break;
+    /*--------fim das entradas digitais-----------*/
 
-    case CHANGE_ID: {
+    /*--------saidas digitais-----------*/
+    case saidaDigital: {
 #if defined(DEBUG)
-        Serial.println(F("CHANGE_ID"));
+        Serial.println(F("saidaDigital"));
 #endif
-        if (buf[2] > 0) sensorConfig.endereco = buf[2];
-        //salva novas configuracoes
-        salvarSensorConfig();
-        reiniciar();
+        escreveSaidaDigital(canPkt.grandeza, canPkt.valor);
+        break;
       };
-      break;
-
-    case CHANGE_SEND_TIME: {
-#if defined(DEBUG)
-        Serial.println(F("CHANGE_SEND_TIME"));
-#endif
-        if (buf[2] >= 0) sensorConfig.intervaloEnvio = buf[2];
-        //salva novas configuracoes
-        salvarSensorConfig();
-        enviarDados();
-      };
-      break;
-
-    case CHANGE_READ_TIME: {
-#if defined(DEBUG)
-        Serial.println(F("CHANGE_READ_TIME"));
-#endif
-        if (buf[2] > 2) {
-          sensorConfig.intervaloLeitura = buf[2];
-        } else {
-          sensorConfig.intervaloLeitura = 2;
-        }
-        //salva novas configuracoes
-        salvarSensorConfig();
-        enviarDados();
-      };
-      break;
-
-#if defined(DEBUG)
-    default:
-      Serial.println(F("Comando nao reconhecido"));
-#endif
-  }
+      /*--------fim das saidas digitais-----------*/
+  };
   return true;
 }
