@@ -106,7 +106,7 @@ void setup()
   CAN.sendMsgBuf(sensorConfig.endereco, 0, sizeof(msgCfg), msgCfg);
 
   //Inicializa o Watchdog
-  //wdt_enable(WDTO_250MS);
+  wdt_enable(WDTO_250MS);
 }
 
 void loop() {
@@ -130,10 +130,12 @@ void loop() {
     lerDados();
     msUltimaLeitura = millis();
     if (CAN.checkError() != 0) {
+      Serial.print("Erro na CAN: ");
+      Serial.println(CAN.checkError());
       reiniciar();
     }
   }
-  //wdt_reset();  //  reseta o watchdog
+  wdt_reset();  //  reseta o watchdog
 }
 
 /**
@@ -154,12 +156,12 @@ void lerDados() {
   dados.umidadeAr = tmp;
 
   /*SIMULA UMIDADE DO SOLO*/
-  dados.umidadeSolo = (float) (random(-300, 900) / 10.0);
+  dados.umidadeSolo = (float) (random(-600, 300)/10.0);
 
   /*SIMULA ENTRADAS DIGITAIS*/
-  for (char i = 0; i < 8; i++) {
-    entradasDigitais[i] = (uint8_t)random(0, 2);
-  }
+//  for (char i = 0; i < 8; i++) {
+//    entradasDigitais[i] = (uint8_t)random(0, 2);
+//  }
   /*FIM DA SIMULAÇÃO*/
 
 #if defined(DEBUG)
@@ -240,7 +242,7 @@ void enviarTemperatura() {
 
   msg[0] = (uint8_t)entradaAnalogica;
   msg[1] = (uint8_t)temperatura;
-  tmp = dados.temperaturaAr * 100.0;
+  tmp = (int16_t)(dados.temperaturaAr * 100.0);
   msg[2] = highByte(tmp);
   msg[3] = lowByte(tmp);
 
@@ -254,7 +256,7 @@ void enviarUmidadeAr() {
 
   msg[0] = (uint8_t)entradaAnalogica;
   msg[1] = (uint8_t)umidadeAr;
-  tmp = dados.umidadeAr * 100.0;
+  tmp = (int16_t)(dados.umidadeAr * 100.0);
   msg[2] = highByte(tmp);
   msg[3] = lowByte(tmp);
 
@@ -267,7 +269,7 @@ void enviarUmidadeSolo() {
 
   msg[0] = (uint8_t)entradaAnalogica;
   msg[1] = (uint8_t)umidadeSolo;
-  tmp = dados.umidadeSolo * 100.0;
+  tmp = (int16_t)(dados.umidadeSolo * 100.0);
   msg[2] = highByte(tmp);
   msg[3] = lowByte(tmp);
 
@@ -275,7 +277,8 @@ void enviarUmidadeSolo() {
 }
 
 
-void lerEntradaDigital(uint8_t entrada) {
+void lerEntradaDigital(int8_t entrada) {
+  Serial.println(entrada);
   if (entrada >= 0 && entrada < 8) {
     unsigned char msg[4] = {0};
 
@@ -289,8 +292,14 @@ void lerEntradaDigital(uint8_t entrada) {
 
 void escreveSaidaDigital(uint8_t saida, int16_t valor) {
 #if defined(DEBUG)
-  if (valor == 1)Serial.print(F("Ligando pino: "));
-  else Serial.print(F("Desligando pino: "));
+  if (valor == 1){
+    Serial.print(F("Ligando pino: "));
+    entradasDigitais[saida] = true;
+  }
+  else{
+    entradasDigitais[saida] = false;
+    Serial.print(F("Desligando pino: "));
+  }
   Serial.println(saida);
 #endif
 }
@@ -399,8 +408,10 @@ bool pacoteRecebido() {
 
     /*--------saidas digitais-----------*/
     case saidaDigital: {
+      canPkt.valor = canPkt.valor/100;
 #if defined(DEBUG)
         Serial.println(F("saidaDigital"));
+        Serial.println(canPkt.valor);
 #endif
         escreveSaidaDigital(canPkt.grandeza, canPkt.valor);
         break;
